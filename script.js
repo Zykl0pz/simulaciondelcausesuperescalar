@@ -497,6 +497,85 @@ function updateConfigFromUI() {
     });
 }
 
+// =============================================
+// FUNCIÓN PARA DETECTAR Y MOSTRAR DIFERENCIAS
+// =============================================
+
+function comparePoliciesAndShowDifferences() {
+    const policies = [
+        { name: "Política 1", data: simulationState.policy1Data },
+        { name: "Política 2", data: simulationState.policy2Data },
+        { name: "Política 3", data: simulationState.policy3Data }
+    ];
+    
+    // Calcular métricas comparativas
+    const metrics = policies.map(policy => {
+        const totalCycles = Math.max(...policy.data.map(inst => inst.length));
+        const totalInstructions = simulationState.currentConfig.length;
+        const ipc = totalCycles > 0 ? (totalInstructions / totalCycles).toFixed(2) : '0.00';
+        
+        // Calcular ciclos de espera por dependencias
+        let waitCycles = 0;
+        policy.data.forEach((instructionData, instIndex) => {
+            let lastStage = null;
+            let lastCycle = 0;
+            
+            instructionData.forEach((cycleData, cycleIndex) => {
+                if (cycleData && cycleData.stage) {
+                    if (lastStage && cycleData.stage !== lastStage) {
+                        const gap = cycleIndex - lastCycle - 1;
+                        if (gap > 0) {
+                            waitCycles += gap;
+                        }
+                    }
+                    lastStage = cycleData.stage;
+                    lastCycle = cycleIndex;
+                }
+            });
+        });
+        
+        return {
+            name: policy.name,
+            totalCycles,
+            ipc,
+            waitCycles,
+            efficiency: ((totalInstructions / (totalCycles + waitCycles)) * 100).toFixed(1) + '%'
+        };
+    });
+    
+    // Añadir análisis al registro
+    addLogEntry('Análisis Comparativo', `
+        <strong>Comparación de Políticas:</strong><br><br>
+        
+        <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; margin: 15px 0;">
+            ${metrics.map(metric => `
+                <div style="background: #e3f2fd; padding: 15px; border-radius: 6px; text-align: center;">
+                    <strong>${metric.name}</strong><br>
+                    <div style="font-size: 1.2em; font-weight: bold; color: #2196f3; margin: 10px 0;">IPC: ${metric.ipc}</div>
+                    <div style="font-size: 0.9em;">Ciclos totales: ${metric.totalCycles}</div>
+                    <div style="font-size: 0.9em;">Ciclos de espera: ${metric.waitCycles}</div>
+                    <div style="font-size: 0.9em;">Eficiencia: ${metric.efficiency}</div>
+                </div>
+            `).join('')}
+        </div>
+        
+        <div style="background: #fff3cd; padding: 10px; border-radius: 4px; margin-top: 10px;">
+            <strong>Observaciones:</strong><br>
+            ${metrics[1].totalCycles < metrics[0].totalCycles ? 
+                '✓ La Política 2 es más rápida que la Política 1 gracias a la finalización desordenada.' : 
+                '⚠ La Política 2 no muestra mejora. Esto ocurre cuando hay muchas dependencias RAW.'}<br>
+            ${metrics[2].totalCycles < metrics[1].totalCycles ? 
+                '✓ La Política 3 es la más rápida gracias a la emisión y finalización desordenadas.' : 
+                '⚠ La Política 3 no muestra mejora significativa. Revisa las dependencias del programa.'}
+        </div>
+    `);
+}
+
+
+// =============================================
+// MODIFICAR LA FUNCIÓN prepareSimulation
+// =============================================
+
 function prepareSimulation() {
     try {
         updateConfigFromUI();
@@ -511,7 +590,7 @@ function prepareSimulation() {
         // Guardar configuración actual
         simulationState.currentConfig = JSON.parse(JSON.stringify(configToUse));
         
-        // Calcular simulaciones
+        // Calcular simulaciones con los algoritmos mejorados
         simulationState.policy1Data = simulateInOrderInOrder(configToUse);
         simulationState.policy2Data = simulateInOrderOutOfOrder(configToUse);
         simulationState.policy3Data = simulateOutOfOrderOutOfOrder(configToUse);
@@ -532,6 +611,9 @@ function prepareSimulation() {
         // Analizar dependencias
         analyzeDependencies();
         
+        // Mostrar análisis comparativo
+        comparePoliciesAndShowDifferences();
+        
         // Actualizar UI
         document.getElementById('btnStep').disabled = false;
         document.getElementById('btnAuto').disabled = false;
@@ -540,7 +622,7 @@ function prepareSimulation() {
         document.getElementById('currentCycleIndicator').style.display = 'block';
         
         updateStatus('Simulación preparada - Lista para ejecutar', true);
-        addLogEntry('Preparación', 'Simulación inicializada con las tres políticas. Métricas calculadas y dependencias analizadas.');
+        addLogEntry('Preparación', 'Simulación inicializada con los algoritmos mejorados. Observa las diferencias entre políticas.');
         
         // Mostrar estado inicial
         updateSimulationDisplay();
@@ -793,29 +875,36 @@ function addLogEntry(title, details) {
 }
 
 // =============================================
-// ALGORITMOS DE SIMULACIÓN CORREGIDOS
+// ALGORITMOS DE SIMULACIÓN CORREGIDOS Y MEJORADOS
 // =============================================
+
 function simulateInOrderInOrder(config) {
     const simulationData = config.map(() => []);
     let currentCycle = 1;
-    
     const unitUsage = {};
+    const instructionStatus = config.map((inst, index) => ({
+        index,
+        decodeCycle: 0,
+        executeStartCycle: 0,
+        writeCycle: 0,
+        completed: false,
+        rawDependenciesSatisfied: false,
+        unit: inst.functionalUnit
+    }));
     
     config.forEach((instruction, index) => {
         let decodeCycle = currentCycle;
         let executeStartCycle = decodeCycle + 1;
         let writeCycle = executeStartCycle + instruction.executionTime;
         
-        // Verificar dependencias
+        // Verificar dependencias RAW
         let dependencyDelay = 0;
-        instruction.dependencies.forEach(depId => {
+        instruction.raw.forEach(depId => {
             const depIndex = config.findIndex(inst => inst.id === depId);
             if (depIndex !== -1 && depIndex < index) {
-                const depWriteCycle = simulationData[depIndex].findIndex(
-                    cycle => cycle && cycle.stage === 'write'
-                ) + 1;
-                if (depWriteCycle > executeStartCycle) {
-                    dependencyDelay = Math.max(dependencyDelay, depWriteCycle - executeStartCycle);
+                const depWriteCycle = instructionStatus[depIndex].writeCycle;
+                if (depWriteCycle > 0 && depWriteCycle >= executeStartCycle) {
+                    dependencyDelay = Math.max(dependencyDelay, depWriteCycle - executeStartCycle + 1);
                 }
             }
         });
@@ -825,19 +914,15 @@ function simulateInOrderInOrder(config) {
         
         // Verificar conflictos de recursos
         let resourceConflict = false;
-        if (unitUsage[instruction.functionalUnit]) {
-            const lastUsage = unitUsage[instruction.functionalUnit];
-            if (lastUsage >= executeStartCycle) {
-                executeStartCycle = lastUsage + 1;
-                writeCycle = executeStartCycle + instruction.executionTime;
-                resourceConflict = true;
-            }
+        const unit = instruction.functionalUnit;
+        if (unitUsage[unit] && unitUsage[unit] >= executeStartCycle) {
+            executeStartCycle = unitUsage[unit] + 1;
+            writeCycle = executeStartCycle + instruction.executionTime;
+            resourceConflict = true;
         }
         
-        unitUsage[instruction.functionalUnit] = writeCycle - 1;
-        
-        // Actualizar currentCycle para la siguiente instrucción
-        currentCycle = Math.max(currentCycle, decodeCycle);
+        // Actualizar uso de unidad funcional
+        unitUsage[unit] = executeStartCycle + instruction.executionTime - 1;
         
         // Registrar en simulationData
         simulationData[index][decodeCycle - 1] = {
@@ -859,7 +944,14 @@ function simulateInOrderInOrder(config) {
             text: 'W'
         };
         
-        currentCycle = writeCycle;
+        // Actualizar estado
+        instructionStatus[index].decodeCycle = decodeCycle;
+        instructionStatus[index].executeStartCycle = executeStartCycle;
+        instructionStatus[index].writeCycle = writeCycle;
+        instructionStatus[index].completed = true;
+        
+        // Avanzar ciclo actual para la siguiente instrucción
+        currentCycle = Math.max(currentCycle, writeCycle);
     });
     
     return simulationData;
@@ -867,53 +959,102 @@ function simulateInOrderInOrder(config) {
 
 function simulateInOrderOutOfOrder(config) {
     const simulationData = config.map(() => []);
-    const instructions = config.map((inst, index) => ({
-        ...inst,
+    const instructionStatus = config.map((inst, index) => ({
         index,
+        id: inst.id,
         decodeCycle: 0,
         executeStartCycle: 0,
         writeCycle: 0,
-        completed: false
+        completed: false,
+        rawDeps: inst.raw || [],
+        warDeps: inst.war || [],
+        wawDeps: inst.waw || [],
+        executionTime: inst.executionTime,
+        unit: inst.functionalUnit,
+        canExecute: false,
+        canWrite: false
     }));
     
     let currentCycle = 1;
     const unitUsage = {};
-    const completedInstructions = [];
+    const decodedInstructions = [];
+    const executedInstructions = [];
+    const writtenInstructions = [];
     
-    while (completedInstructions.length < instructions.length) {
-        instructions.forEach(instruction => {
-            if (instruction.completed) return;
+    // Emisión en orden
+    let issueIndex = 0;
+    
+    while (writtenInstructions.length < config.length) {
+        // 1. Emitir (decodificar) una instrucción por ciclo en orden
+        if (issueIndex < config.length) {
+            const inst = instructionStatus[issueIndex];
+            inst.decodeCycle = currentCycle;
+            decodedInstructions.push(inst);
+            issueIndex++;
             
-            // Si aún no se ha decodificado
-            if (instruction.decodeCycle === 0) {
-                instruction.decodeCycle = currentCycle;
-            }
-            
-            // Si está decodificada pero no ha empezado a ejecutar
-            if (instruction.decodeCycle > 0 && instruction.executeStartCycle === 0) {
-                // Verificar dependencias
-                const dependenciesSatisfied = instruction.dependencies.every(depId => {
-                    const depInstruction = instructions.find(inst => inst.id === depId);
-                    return depInstruction && depInstruction.completed;
-                });
-                
-                if (dependenciesSatisfied) {
-                    // Verificar disponibilidad de unidad funcional
-                    let executeCycle = currentCycle;
-                    if (unitUsage[instruction.functionalUnit] && unitUsage[instruction.functionalUnit] >= currentCycle) {
-                        executeCycle = unitUsage[instruction.functionalUnit] + 1;
-                    }
+            // Verificar si puede ejecutarse inmediatamente
+            inst.canExecute = inst.rawDeps.every(depId => {
+                const depInst = instructionStatus.find(i => i.id === depId);
+                return depInst && depInst.writeCycle > 0 && currentCycle >= depInst.writeCycle;
+            });
+        }
+        
+        // 2. Intentar ejecutar instrucciones decodificadas pero no ejecutadas
+        decodedInstructions.forEach(inst => {
+            if (!inst.executeStartCycle && inst.canExecute) {
+                // Verificar disponibilidad de unidad funcional
+                const unit = inst.unit;
+                if (!unitUsage[unit] || unitUsage[unit] < currentCycle) {
+                    inst.executeStartCycle = currentCycle;
+                    unitUsage[unit] = currentCycle + inst.executionTime - 1;
+                    executedInstructions.push(inst);
                     
-                    instruction.executeStartCycle = executeCycle;
-                    unitUsage[instruction.functionalUnit] = executeCycle + instruction.executionTime - 1;
-                    instruction.writeCycle = executeCycle + instruction.executionTime;
+                    // Verificar si puede escribir después de ejecutar
+                    setTimeout(() => {
+                        inst.canWrite = inst.warDeps.every(depId => {
+                            const depInst = instructionStatus.find(i => i.id === depId);
+                            return depInst && depInst.executeStartCycle > 0 && 
+                                   currentCycle > depInst.executeStartCycle;
+                        }) && inst.wawDeps.every(depId => {
+                            const depInst = instructionStatus.find(i => i.id === depId);
+                            return depInst && depInst.writeCycle > 0 && 
+                                   currentCycle >= depInst.writeCycle;
+                        });
+                    }, 0);
                 }
             }
+        });
+        
+        // 3. Intentar escribir resultados de instrucciones ejecutadas
+        executedInstructions.forEach(inst => {
+            if (!inst.writeCycle && inst.canWrite && 
+                currentCycle >= inst.executeStartCycle + inst.executionTime) {
+                
+                inst.writeCycle = currentCycle;
+                inst.completed = true;
+                writtenInstructions.push(inst);
+            }
+        });
+        
+        // 4. Actualizar estado de dependencias para instrucciones en espera
+        decodedInstructions.forEach(inst => {
+            if (!inst.executeStartCycle && !inst.canExecute) {
+                inst.canExecute = inst.rawDeps.every(depId => {
+                    const depInst = instructionStatus.find(i => i.id === depId);
+                    return depInst && depInst.writeCycle > 0 && currentCycle >= depInst.writeCycle;
+                });
+            }
             
-            // Marcar como completada si ha llegado a su ciclo de escritura
-            if (instruction.writeCycle > 0 && currentCycle >= instruction.writeCycle && !instruction.completed) {
-                instruction.completed = true;
-                completedInstructions.push(instruction.index);
+            if (inst.executeStartCycle && !inst.writeCycle && !inst.canWrite) {
+                inst.canWrite = inst.warDeps.every(depId => {
+                    const depInst = instructionStatus.find(i => i.id === depId);
+                    return depInst && depInst.executeStartCycle > 0 && 
+                           currentCycle > depInst.executeStartCycle;
+                }) && inst.wawDeps.every(depId => {
+                    const depInst = instructionStatus.find(i => i.id === depId);
+                    return depInst && depInst.writeCycle > 0 && 
+                           currentCycle >= depInst.writeCycle;
+                });
             }
         });
         
@@ -921,20 +1062,20 @@ function simulateInOrderOutOfOrder(config) {
     }
     
     // Llenar simulationData
-    instructions.forEach(instruction => {
-        simulationData[instruction.index][instruction.decodeCycle - 1] = {
+    instructionStatus.forEach(inst => {
+        simulationData[inst.index][inst.decodeCycle - 1] = {
             stage: 'decode',
             text: 'D'
         };
         
-        for (let i = 0; i < instruction.executionTime; i++) {
-            simulationData[instruction.index][instruction.executeStartCycle - 1 + i] = {
+        for (let i = 0; i < inst.executionTime; i++) {
+            simulationData[inst.index][inst.executeStartCycle - 1 + i] = {
                 stage: 'execute',
                 text: `E${i+1}`
             };
         }
         
-        simulationData[instruction.index][instruction.writeCycle - 1] = {
+        simulationData[inst.index][inst.writeCycle - 1] = {
             stage: 'write',
             text: 'W'
         };
@@ -945,59 +1086,151 @@ function simulateInOrderOutOfOrder(config) {
 
 function simulateOutOfOrderOutOfOrder(config) {
     const simulationData = config.map(() => []);
-    const instructions = config.map((inst, index) => ({
-        ...inst,
+    const instructionStatus = config.map((inst, index) => ({
         index,
+        id: inst.id,
         decodeCycle: 0,
         executeStartCycle: 0,
         writeCycle: 0,
-        completed: false
+        completed: false,
+        rawDeps: inst.raw || [],
+        warDeps: inst.war || [],
+        wawDeps: inst.waw || [],
+        executionTime: inst.executionTime,
+        unit: inst.functionalUnit,
+        canExecute: false,
+        canWrite: false,
+        readyToIssue: false,
+        issued: false
     }));
     
     let currentCycle = 1;
     const unitUsage = {};
-    const completedInstructions = [];
-    const decodedInstructions = [];
+    const readyQueue = [];
+    const issuedInstructions = [];
+    const executedInstructions = [];
+    const writtenInstructions = [];
     
-    while (completedInstructions.length < instructions.length) {
-        // Intentar decodificar instrucciones
-        instructions.forEach(instruction => {
-            if (instruction.decodeCycle === 0 && !decodedInstructions.includes(instruction.index)) {
-                // En emisión desordenada, podemos decodificar en cualquier orden
-                instruction.decodeCycle = currentCycle;
-                decodedInstructions.push(instruction.index);
+    // Inicializar: instrucciones sin dependencias RAW están listas para emitir
+    instructionStatus.forEach(inst => {
+        if (inst.rawDeps.length === 0) {
+            inst.readyToIssue = true;
+            readyQueue.push(inst);
+        }
+    });
+    
+    while (writtenInstructions.length < config.length) {
+        // 1. Emisión desordenada: emitir múltiples instrucciones si están listas
+        const instructionsToIssue = readyQueue.filter(inst => !inst.issued);
+        
+        instructionsToIssue.forEach(inst => {
+            if (!inst.decodeCycle) {
+                inst.decodeCycle = currentCycle;
+                inst.issued = true;
+                issuedInstructions.push(inst);
+                
+                // Verificar si puede ejecutarse inmediatamente
+                inst.canExecute = inst.rawDeps.every(depId => {
+                    const depInst = instructionStatus.find(i => i.id === depId);
+                    return depInst && depInst.writeCycle > 0 && currentCycle >= depInst.writeCycle;
+                });
             }
         });
         
-        // Intentar ejecutar instrucciones decodificadas
-        decodedInstructions.forEach(decodedIndex => {
-            const instruction = instructions[decodedIndex];
-            if (instruction.executeStartCycle === 0 && !instruction.completed) {
-                // Verificar dependencias
-                const dependenciesSatisfied = instruction.dependencies.every(depId => {
-                    const depInstruction = instructions.find(inst => inst.id === depId);
-                    return depInstruction && depInstruction.completed;
-                });
-                
-                if (dependenciesSatisfied) {
-                    // Verificar disponibilidad de unidad funcional
-                    let executeCycle = currentCycle;
-                    if (unitUsage[instruction.functionalUnit] && unitUsage[instruction.functionalUnit] >= currentCycle) {
-                        executeCycle = unitUsage[instruction.functionalUnit] + 1;
-                    }
+        // 2. Eliminar instrucciones emitidas de la cola de listas
+        instructionsToIssue.forEach(inst => {
+            const index = readyQueue.indexOf(inst);
+            if (index > -1) {
+                readyQueue.splice(index, 1);
+            }
+        });
+        
+        // 3. Intentar ejecutar instrucciones emitidas
+        issuedInstructions.forEach(inst => {
+            if (!inst.executeStartCycle && inst.canExecute) {
+                // Verificar disponibilidad de unidad funcional
+                const unit = inst.unit;
+                if (!unitUsage[unit] || unitUsage[unit] < currentCycle) {
+                    inst.executeStartCycle = currentCycle;
+                    unitUsage[unit] = currentCycle + inst.executionTime - 1;
+                    executedInstructions.push(inst);
                     
-                    instruction.executeStartCycle = executeCycle;
-                    unitUsage[instruction.functionalUnit] = executeCycle + instruction.executionTime - 1;
-                    instruction.writeCycle = executeCycle + instruction.executionTime;
+                    // Programar verificación para escritura
+                    setTimeout(() => {
+                        inst.canWrite = inst.warDeps.every(depId => {
+                            const depInst = instructionStatus.find(i => i.id === depId);
+                            return depInst && depInst.executeStartCycle > 0 && 
+                                   currentCycle > depInst.executeStartCycle;
+                        }) && inst.wawDeps.every(depId => {
+                            const depInst = instructionStatus.find(i => i.id === depId);
+                            return depInst && depInst.writeCycle > 0 && 
+                                   currentCycle >= depInst.writeCycle;
+                        });
+                    }, 0);
                 }
             }
         });
         
-        // Marcar instrucciones completadas
-        instructions.forEach(instruction => {
-            if (instruction.writeCycle > 0 && currentCycle >= instruction.writeCycle && !instruction.completed) {
-                instruction.completed = true;
-                completedInstructions.push(instruction.index);
+        // 4. Intentar escribir resultados
+        executedInstructions.forEach(inst => {
+            if (!inst.writeCycle && inst.canWrite && 
+                currentCycle >= inst.executeStartCycle + inst.executionTime) {
+                
+                inst.writeCycle = currentCycle;
+                inst.completed = true;
+                writtenInstructions.push(inst);
+                
+                // Liberar dependencias RAW para otras instrucciones
+                instructionStatus.forEach(otherInst => {
+                    if (!otherInst.issued && otherInst.rawDeps.includes(inst.id)) {
+                        const allDepsSatisfied = otherInst.rawDeps.every(depId => {
+                            const depInst = instructionStatus.find(i => i.id === depId);
+                            return depInst && depInst.writeCycle > 0 && currentCycle >= depInst.writeCycle;
+                        });
+                        
+                        if (allDepsSatisfied && !otherInst.readyToIssue) {
+                            otherInst.readyToIssue = true;
+                            readyQueue.push(otherInst);
+                        }
+                    }
+                });
+            }
+        });
+        
+        // 5. Actualizar estado de todas las instrucciones
+        instructionStatus.forEach(inst => {
+            // Actualizar readiness para emisión
+            if (!inst.issued && !inst.readyToIssue) {
+                const allDepsSatisfied = inst.rawDeps.every(depId => {
+                    const depInst = instructionStatus.find(i => i.id === depId);
+                    return depInst && depInst.writeCycle > 0 && currentCycle >= depInst.writeCycle;
+                });
+                
+                if (allDepsSatisfied) {
+                    inst.readyToIssue = true;
+                    readyQueue.push(inst);
+                }
+            }
+            
+            // Actualizar capacidad de ejecución
+            if (inst.issued && !inst.executeStartCycle && !inst.canExecute) {
+                inst.canExecute = inst.rawDeps.every(depId => {
+                    const depInst = instructionStatus.find(i => i.id === depId);
+                    return depInst && depInst.writeCycle > 0 && currentCycle >= depInst.writeCycle;
+                });
+            }
+            
+            // Actualizar capacidad de escritura
+            if (inst.executeStartCycle && !inst.writeCycle && !inst.canWrite) {
+                inst.canWrite = inst.warDeps.every(depId => {
+                    const depInst = instructionStatus.find(i => i.id === depId);
+                    return depInst && depInst.executeStartCycle > 0 && 
+                           currentCycle > depInst.executeStartCycle;
+                }) && inst.wawDeps.every(depId => {
+                    const depInst = instructionStatus.find(i => i.id === depId);
+                    return depInst && depInst.writeCycle > 0 && 
+                           currentCycle >= depInst.writeCycle;
+                });
             }
         });
         
@@ -1005,20 +1238,20 @@ function simulateOutOfOrderOutOfOrder(config) {
     }
     
     // Llenar simulationData
-    instructions.forEach(instruction => {
-        simulationData[instruction.index][instruction.decodeCycle - 1] = {
+    instructionStatus.forEach(inst => {
+        simulationData[inst.index][inst.decodeCycle - 1] = {
             stage: 'decode',
             text: 'D'
         };
         
-        for (let i = 0; i < instruction.executionTime; i++) {
-            simulationData[instruction.index][instruction.executeStartCycle - 1 + i] = {
+        for (let i = 0; i < inst.executionTime; i++) {
+            simulationData[inst.index][inst.executeStartCycle - 1 + i] = {
                 stage: 'execute',
                 text: `E${i+1}`
             };
         }
         
-        simulationData[instruction.index][instruction.writeCycle - 1] = {
+        simulationData[inst.index][inst.writeCycle - 1] = {
             stage: 'write',
             text: 'W'
         };
