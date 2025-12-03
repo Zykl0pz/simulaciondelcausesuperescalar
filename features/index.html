@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Simulador de Políticas Superescalares - Corregido</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <h1>Simulador de Políticas Superescalares - Versión Corregida</h1>
+        
+        <div class="examples-panel">
+            <h2>Ejemplos Predefinidos</h2>
+            <div class="examples-grid">
+                <button class="example-btn" data-example="figura14.4">Figura 14.4 Original</button>
+                <button class="example-btn" data-example="dependenciasComplejas">Dependencias Complejas</button>
+                <button class="example-btn" data-example="conflictosRecursos">Conflictos de Recursos</button>
+                <button class="example-btn" data-example="saltosCondicionales">Saltos Condicionales</button>
+                <button class="example-btn" data-example="renombradoRegistros">Renombrado de Registros</button>
+            </div>
+        </div>
+        
+        <div class="config-panel">
+            <h2>Configuración de Instrucciones</h2>
+            <div class="instructions-grid" id="instructionsConfig">
+                <!-- Las instrucciones se generarán dinámicamente -->
+            </div>
+            
+            <div class="controls">
+                <button id="btnReset">Restablecer Configuración</button>
+                <button id="btnSimulate">Preparar Simulación</button>
+                <button id="btnStep" class="btn-step" disabled>Ejecutar Paso (500ms)</button>
+                <button id="btnAuto" disabled>Ejecución Automática</button>
+                <button id="btnResetSim" disabled>Reiniciar Simulación</button>
+                <button id="btnToggleRename" class="btn-success" disabled>Activar Renombrado</button>
+            </div>
+            
+            <div class="status-indicator">
+                <div class="status-dot" id="statusDot"></div>
+                <span id="statusText">Preparado para configurar</span>
+            </div>
+        </div>
+        
+        <div id="currentCycleIndicator" class="current-cycle-indicator" style="display: none;">
+            Ciclo Actual: <span id="currentCycle">0</span>
+        </div>
+        
+        <div id="dependenciesContainer" class="dependencies-graph" style="display: none;">
+            <h3>Análisis de Dependencias</h3>
+            <div class="graph-container" id="dependenciesGraph">
+                <!-- Gráfico de dependencias se generará aquí -->
+            </div>
+        </div>
+        
+        <div class="policies-container" id="policiesContainer">
+            <!-- Las políticas se generarán dinámicamente -->
+        </div>
+        
+        <div class="legend">
+            <div class="legend-item">
+                <div class="legend-color" style="background-color: var(--color-decode);"></div>
+                <span>Decodificación</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-color" style="background-color: var(--color-execute);"></div>
+                <span>Ejecución</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-color" style="background-color: var(--color-write);"></div>
+                <span>Escritura</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-color" style="background-color: var(--color-active);"></div>
+                <span>Activo en Ciclo Actual</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-color" style="background-color: var(--color-raw);"></div>
+                <span>Dependencia RAW</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-color" style="background-color: var(--color-war);"></div>
+                <span>Dependencia WAR</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-color" style="background-color: var(--color-waw);"></div>
+                <span>Dependencia WAW</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-color" style="background-color: var(--color-conflict); border: 1px dashed #e74c3c;"></div>
+                <span>Conflicto de Recursos</span>
+            </div>
+        </div>
+        
+        <div class="execution-log">
+            <div class="log-header">
+                <h3>Registro de Ejecución Paso a Paso</h3>
+            </div>
+            <div class="log-content" id="logContent">
+                <div class="log-entry">
+                    <div class="log-cycle">Estado Inicial</div>
+                    <div class="log-details">Selecciona un ejemplo predefinido o configura las instrucciones manualmente, luego haz clic en "Preparar Simulación" para comenzar.</div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="instructions-info">
+            <h3>Instrucciones de Uso - Características Mejoradas</h3>
+            <p><strong>1. Métricas de Rendimiento:</strong> Se muestran IPC y utilización de recursos en tiempo real para cada política.</p>
+            <p><strong>2. Ejemplos Predefinidos:</strong> Usa los botones para cargar configuraciones comunes y estudiar diferentes escenarios.</p>
+            <p><strong>3. Visualización de Dependencias:</strong> Se muestran gráficamente las dependencias RAW, WAR y WAW entre instrucciones.</p>
+            <p><strong>4. Renombrado de Registros:</strong> Activa el botón para ver cómo el renombrado resuelve dependencias falsas (WAR/WAW).</p>
+            <p><strong>5. Predicción de Saltos:</strong> El ejemplo de saltos muestra cómo la predicción afecta el rendimiento.</p>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
